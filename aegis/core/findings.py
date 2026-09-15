@@ -69,6 +69,9 @@ class Finding:
     remediation: str | None = None
     trace: list[TraceStep] = field(default_factory=list)
     snippet: str | None = None
+    # Дополнительные пометки от внешних слоёв (например, разбора моделью).
+    # Справочные: на уровень опасности и на сам факт находки не влияют.
+    notes: dict[str, str] = field(default_factory=dict)
 
     @property
     def location(self) -> str:
@@ -94,4 +97,5 @@ class Finding:
             "remediation": self.remediation,
             "trace": [{"line": s.line, "description": s.description} for s in self.trace],
             "snippet": self.snippet,
+            "notes": self.notes or None,
         }

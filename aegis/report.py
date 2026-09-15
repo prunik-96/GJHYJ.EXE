@@ -89,6 +89,16 @@ def _render_finding(finding: Finding, palette: _Palette) -> str:
             lines.append(f"    {palette.dim(str(step.line) + ':')} {step.description}")
     if finding.remediation:
         lines.append(f"  {palette.bold('как исправить:')} {finding.remediation}")
+    verdict = finding.notes.get("ai_verdict")
+    if verdict:
+        lines.append(f"  {palette.bold('разбор моделью:')} {verdict}"
+                     f"{palette.dim(' (справочно, находка остаётся)')}")
+        reason = finding.notes.get("ai_reason")
+        if reason:
+            lines.append(f"    {reason}")
+        impact = finding.notes.get("ai_impact")
+        if impact:
+            lines.append(f"    {palette.dim('последствия: ' + impact)}")
     return "\n".join(lines)
 
 

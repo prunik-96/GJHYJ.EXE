@@ -32,9 +32,6 @@ OPTIONAL_CALLS: frozenset[str] = frozenset({
 # Методы, возвращающие None, у объекта неизвестного типа.
 OPTIONAL_METHODS: frozenset[str] = frozenset({"get", "find", "match", "search", "fullmatch"})
 
-_ORDER = {NOT_NONE: 0, MAYBE_NONE: 1, DEFINITELY_NONE: 2}
-
-
 def _join_value(left: str, right: str) -> str:
     if left == right:
         return left
@@ -152,6 +149,16 @@ class NullnessAnalysis:
             # Истинное значение заведомо не None.
             state[test.id] = NOT_NONE if truth else MAYBE_NONE
             return
+        if isinstance(test, ast.Call):
+            # isinstance(x, str) — самая частая в Python защита от None.
+            # На ложной ветке ничего не уточняем: значение может быть и не None,
+            # а просто другого типа.
+            name = dotted_name(test.func)
+            if name in ("isinstance", "callable") and test.args and truth:
+                first = test.args[0]
+                if isinstance(first, ast.Name) and not _mentions_none_type(test):
+                    state[first.id] = NOT_NONE
+            return
         if isinstance(test, ast.Compare) and len(test.ops) == 1:
             operator = test.ops[0]
             left, right = test.left, test.comparators[0]
@@ -195,10 +202,44 @@ class NullnessAnalysis:
 
     # --- поиск опасных обращений ------------------------------------------
 
-    def _inspect(self, node: ast.expr, state: dict[str, str]) -> None:
-        for child in ast.walk(node):
-            if isinstance(child, (ast.Attribute, ast.Subscript)):
-                self._check_access(child, child.value, state)
+    def _inspect(self, node: ast.expr | None, state: dict[str, str]) -> None:
+        """Обойти выражение, уточняя состояние по ходу.
+
+        Простой обход всего дерева подряд давал ложные срабатывания на
+        обычных для Python идиомах: ``x is not None and x.foo`` и
+        ``x.strip() if isinstance(x, str) else ""``. В обоих случаях защита
+        стоит внутри того же выражения, поэтому её нужно учитывать здесь,
+        а не только на рёбрах графа.
+        """
+        if node is None:
+            return
+        if isinstance(node, ast.BoolOp):
+            local = dict(state)
+            for value in node.values:
+                self._inspect(value, local)
+                # В `a and b` выражение b вычисляется, только если a истинно.
+                self._apply_condition(value, isinstance(node.op, ast.And), local)
+            return
+        if isinstance(node, ast.IfExp):
+            self._inspect(node.test, state)
+            body_state = dict(state)
+            self._apply_condition(node.test, True, body_state)
+            self._inspect(node.body, body_state)
+            else_state = dict(state)
+            self._apply_condition(node.test, False, else_state)
+            self._inspect(node.orelse, else_state)
+            return
+        if isinstance(node, ast.Lambda):
+            return  # отдельная область видимости
+        if isinstance(node, (ast.Attribute, ast.Subscript)):
+            self._inspect(node.value, state)
+            if isinstance(node, ast.Subscript):
+                self._inspect(node.slice, state)
+            self._check_access(node, node.value, state)
+            return
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.expr):
+                self._inspect(child, state)
 
     def _check_access(self, access: ast.expr, base: ast.expr, state: dict[str, str]) -> None:
         if isinstance(base, ast.Name):
@@ -250,3 +291,12 @@ def _name_compared_with_none(left: ast.expr, right: ast.expr) -> str | None:
 
 def _is_none_literal(node: ast.expr) -> bool:
     return isinstance(node, ast.Constant) and node.value is None
+
+
+def _mentions_none_type(call: ast.Call) -> bool:
+    """isinstance(x, type(None)) защитой от None не является."""
+    return any(
+        isinstance(node, ast.Constant) and node.value is None
+        for argument in call.args[1:]
+        for node in ast.walk(argument)
+    )

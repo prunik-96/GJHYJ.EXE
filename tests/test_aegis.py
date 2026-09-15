@@ -271,6 +271,32 @@ class TestNullness(unittest.TestCase):
         source = "def f(v=None):\n    v = v or ''\n    return v.upper()\n"
         self.assertNotIn("AEG-BUG-001", rules_for(source))
 
+    def test_isinstance_is_a_guard(self):
+        """isinstance(x, str) исключает None — частая идиома Python."""
+        source = "def f(v=None):\n    if isinstance(v, str):\n        return v.upper()\n    return ''\n"
+        self.assertNotIn("AEG-BUG-001", rules_for(source))
+
+    def test_isinstance_inside_ternary(self):
+        source = "def f(v=None):\n    return v.strip() if isinstance(v, str) else ''\n"
+        self.assertNotIn("AEG-BUG-001", rules_for(source))
+
+    def test_and_chain_guard(self):
+        source = "def f(v=None):\n    return v is not None and v.upper()\n"
+        self.assertNotIn("AEG-BUG-001", rules_for(source))
+
+    def test_truthiness_and_chain(self):
+        source = "def f(v=None):\n    return bool(v and v.strip())\n"
+        self.assertNotIn("AEG-BUG-001", rules_for(source))
+
+    def test_unrelated_ternary_condition_still_reported(self):
+        """Условие, не проверяющее значение, защитой не является."""
+        source = "def f(flag, v=None):\n    return v.upper() if flag else ''\n"
+        self.assertIn("AEG-BUG-001", rules_for(source))
+
+    def test_isinstance_with_none_type_is_not_a_guard(self):
+        source = "def f(v=None):\n    if isinstance(v, type(None)):\n        return v.upper()\n    return ''\n"
+        self.assertIn("AEG-BUG-001", rules_for(source))
+
     def test_assert_clears_suspicion(self):
         source = (
             "import re\n"
